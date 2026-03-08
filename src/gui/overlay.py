@@ -8,12 +8,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import signal
 from core.listener import SpeechWorker
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QFrame, QVBoxLayout
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import QThread, pyqtSignal
-from core.brain import LumiBrain
-from core.workers import BrainWorker # type: ignore # или опиши класс прямо в этом файле
+from core.brain import BrainWorker, LumiBrain
+# from core.workers import BrainWorker # type: ignore # или опиши класс прямо в этом файле
 
 
 # Настройка завершения скрипта по Ctrl+C
@@ -22,25 +21,35 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 # ---------------------------------------------- Создаем кожу для нашей Люми ------------------------------------------------------- #
 
-class LumiOverlay(QWidget):
-    def __init__(self):
+class LumiWorker(QThread):
+    result_received = pyqtSignal(str)
+
+    def __init__(self, brain, text):
         super().__init__()
+        self.brain = brain
+        self.text = text
+
+    def run(self):
+        answer = self.brain.ask(self.text)
+        self.result_received.emit(answer)
+
+
+class LumiOverlay(QWidget):
+
+    def __init__(self, brain=None):
+        super().__init__()
+        self.brain = brain if brain else LumiBrain()
         self.init_ui()
         
-        # Создаем объект-слушатель. # device_id — это тот ID от AudioRelay, который ты нашел.
+        # Создаем объект-слушатель. # device_id — это тот ID от AudioRelay.
         self.worker = SpeechWorker(device_id=1) 
-
-        # CONNECT: Связываем сигнал из потока с методом в этом классе.
         self.worker.text_recognized.connect(self.on_speech)
-
-        self.brain = LumiBrain()
-        self.brain_worker = BrainWorker(self.brain)
-
-        # Когда поток закончит запрос к API, он вызовет метод self.show_lumi_answer
-        self.brain_worker.finished.connect(self.show_lumi_answer)
-
-        # START: Запускаем поток. Теперь он живет своей жизнью и не мешает окну.
         self.worker.start()
+        self.is_thinking = False
+
+        self.brain_worker = BrainWorker(self.brain)
+        self.brain_worker.finished.connect(self.show_lumi_answer)
+        
 
     def init_ui(self):
         self.setWindowFlags(
@@ -56,49 +65,78 @@ class LumiOverlay(QWidget):
         self.main_layout.setSpacing(10) # Расстояние между облачком и Люми
 
         # 1. ОБЛАЧКО
-        self.bubble = QFrame()
-        self.bubble.setStyleSheet("""
-            background-color: white;
-            border: 2px solid #FFC0CB;
-            border-radius: 15px;
+        self.bubble_label = QLabel("Люми: Привет! Я готова.")
+        self.bubble_label.setStyleSheet("""
+            color: #00FF00;
+            background: rgba(0, 0, 0, 150);
+            border: 1px solid #00FF00;
             padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New';
         """)
-        self.bubble_layout = QVBoxLayout(self.bubble)
-        self.text_label = QLabel("...")
-        self.text_label.setWordWrap(True)
-        self.text_label.setStyleSheet("color: black; font-size: 14px;")
-        self.bubble_layout.addWidget(self.text_label)
-        
-        # Сначала прячем, чтобы не висел пустой квадрат
-        self.bubble.hide()
+        self.bubble_label.setWordWrap(True)
+        self.bubble_label.setFixedWidth(300)
+        self.bubble_label.hide()
 
-        # 2. ЛЮМИ
-        self.label = QLabel()
+
+        # 2. ПОЛЕ ВВОДА
+        self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText("Скажи что-нибудь...")
+        self.input_field.setStyleSheet("background: rgba(30,30,30,200); color: white; border: 1px solid #444;")
+        self.input_field.setFixedWidth(300)
+        self.input_field.returnPressed.connect(self.send_message)
+
+
+        # 3. ЛЮМИ
+        self.sprite_label = QLabel()
         self.update_sprite("assets/lumi_idle.png")
 
-        # Добавляем в слой: сначала облачко (сверху), потом Люми (снизу)
-        self.main_layout.addWidget(self.bubble, alignment=Qt.AlignmentFlag.AlignHCenter)
-        self.main_layout.addWidget(self.label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.main_layout.addWidget(self.bubble_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.main_layout.addWidget(self.input_field, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.main_layout.addWidget(self.sprite_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.show()
 
     def update_sprite(self, path):
-        pixmap = QPixmap(path)
-        self.label.setPixmap(pixmap)
-        # Убираем жесткий resize окна по картинке, 
-        # теперь Layout сам раздвинет окно как надо
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        full_path = os.path.join(base_path, path)
+
+        if os.path.exists(full_path):
+            pixmap = QPixmap(full_path)
+            self.sprite_label.setPixmap(pixmap)
+            self.adjustSize()
+        else:
+            self.sprite_label.setText(f"Ошибка: Люми... А именно {path} не найдена! Поищите в другом месте.")
+            self.sprite_label.setStyleSheet("background: red; color: white;")
+
+
+
+    def send_message(self):
+        text = self.input_field.text()
+        if text:
+            self.input_field.clear()
+            self.bubble_label.show()
+            self.bubble_label.setText("<i>Люми думает...</i>")
+
+            self.worker = LumiWorker(self.brain, text)
+            self.worker.result_received.connect(self.display_answer)
+            self.worker.start()
+    
+    def display_answer(self, answer):
+        self.bubble_label.setText(f"Люми: {answer}")
+        self.bubble_label.show()
         self.adjustSize()
+
+        self.is_thinking = False
 
     # Логика перетаскивания окна по экрану
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.old_pos = event.globalPosition().toPoint()
+        self.old_pos = event.globalPosition().toPoint()
 
     def mouseMoveEvent(self, event):
-        if self.old_pos:
-            delta = QPoint(event.globalPosition().toPoint() - self.old_pos)
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.old_pos = event.globalPosition().toPoint()
+        delta = event.globalPosition().toPoint() - self.old_pos
+        self.move(self.x() + delta.x(), self.y() + delta.y())
+        self.old_pos = event.globalPosition().toPoint()
 
     def mouseReleaseEvent(self, event):
         self.old_pos = None
@@ -112,7 +150,8 @@ class LumiOverlay(QWidget):
         print(f"Илья сказал: {text}")
         
         # Меняем текст в облачке на "..." чтобы было видно, что Люми думает
-        self.label_text.setText("...") 
+        self.bubble_label.show()
+        self.bubble_label.setText("<i>Думаю...</i>")
         
         # Запускаем фоновый запрос к GigaChat
         self.brain_worker.prepare(text)
@@ -120,27 +159,27 @@ class LumiOverlay(QWidget):
 
     def show_lumi_answer(self, answer):
         print(f"Люми ответила: {answer}")
-        self.label_text.setText(answer)
+        self.bubble_label.setText(answer)
+        self.bubble_label.show()
+        self.adjustSize()
+        self.is_thinking = False
         # Здесь в будущем мы будем менять спрайт Люми на радостный/грустный
 
 
 # ---------------------------------------------- Разговор для нашей Люми ------------------------------------------------------- #
 
     def on_speech(self, text):
-        # Этот метод сработает автоматически, как только ты что-то скажешь
-        print(f"Люми услышала: {text}")
-        self.text_label.setText(f"Ты сказал: {text}")
-        self.bubble.show()
+        if self.is_thinking:
+            return
+        
+        if not text.strip():
+            return
+        
+        print(f'Люми услышала голос: {text}')
+
+        self.bubble_label.show()
+        self.bubble_label.setText(f'<i>Слушаю: {text}</i>')
         self.adjustSize()
-
-
-        # Этот метод сработает автоматически, он убирает облачко через 5 секунд
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(5000, self.bubble.hide)
-
-
-# ----------------------------------------- Анимации и движения для нашей Люми ------------------------------------------------------- #
-
 
         # Маленький интерактив: если скажешь "замри", 
         # мы можем, например, поменять картинку
@@ -148,6 +187,22 @@ class LumiOverlay(QWidget):
             print("Люми радуется!")
             self.update_sprite("assets/lumi_happy.png")
 
+        self.process_thought(text)
+
+
+    def process_thought(self, text):
+        self.is_thinking = True
+        self.bubble_label.setText(f'<i>Думаю... </i>')
+
+        self.worker = LumiWorker(self.brain, text)
+        self.worker.result_received.connect(self.display_answer)
+        self.worker.finished.connect(self.reset_thinking_state)
+        self.worker.start()
+        
+    
+    def reset_thinking_state(self):
+        self.is_thinking = False
+        print("Система: Люми снова может вас услышать. Говорите")
 
 
 # ------------------------------------------- Включение/выключение нашей Люми ------------------------------------------------------- #

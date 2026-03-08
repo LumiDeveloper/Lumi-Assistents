@@ -1,11 +1,11 @@
 import sqlite3
-import os
+
 
 class LumiMemory:
     def __init__(self, db_name="lumi_soul.db"):
         self.db_name = db_name
         self._init_db()
-
+        
 
     def _init_db(self):
         # Создаем таблицу, если её нет

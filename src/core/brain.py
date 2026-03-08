@@ -1,18 +1,44 @@
 import requests
 import uuid
-import json
 import urllib3
+import os
 from PyQt6.QtCore import QThread, pyqtSignal
 from memory import LumiMemory
 
 # Отключаем ворнинги о небезопасном соединении (для GigaChat)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+def load_manual_env(file_path=".env"):
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    os.environ[key.strip()] = value.strip()
+        print("Система: .env загружены")
+    else:
+        print("Система: .ENV НЕ НАЙДЕНЫ! РАБОТАЕМ БЕЗ НЕЙРОСЕТЕЙ!")
+
+
+load_manual_env()
+                
+
+# ---------------------------------------------- Включаем зависимости мозга нашей Люми ------------------------------------------------------- #
+
 class LumiBrain:
     def __init__(self):
-        # ВСТАВЬ СВОИ ДАННЫЕ СЮДА
-        self.gigachat_auth = "MDE5Y2JmNGUtN2U0YS03MmY1LTkwN2EtY2RlYzIwMDExNGZjOjRlMzU3ZDlkLWY4YTctNDYyZi1hZWY4LWY2ZjE0OTlmYmU1Yw=="
-        self.deepseek_key = "sk-4e803e2e438c474f80bd0b093f2faf73"
+        # Данные DeepSeek
+        self.deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        self.ds_url = "https://api.deepseek.com/v1/chat/completions"
+
+        # Данные GigaChat
+        self.gigachat_key = os.getenv("GIGACHAT_API_KEY")
+        self.gc_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+
         self.memory = LumiMemory()
         
         self.system_prompt = (
@@ -25,65 +51,80 @@ class LumiBrain:
             "Стиль ответов: Коротко, обычно, с малой долей затупов и багов (1-2 предложения), эмоционально если есть хорошее настроение, с компьютерными метафорами и даже отсылками на приколы из интернета, но в меру. Если вопросы информационного характера, то предлагай короткий вариант (1-2 предложения), если пользователь требует более развернутый ответ, то выкладывай уже средний вариант (5-6 предложений), а если требуют полного анализа, то выводи самый большой из всех вариантов вывода (минимум 10-15 предложений). Когда дело идет о кодинге, то предлагай полный ответ на вопрос с подробными инструкциями всего процесса, оптимизируй код по стандартам ООП и современных методологий проектирования и заставляй Илью эти требования соблюдать (ведь ты же гений в программировании!)"
         )
 
-    def _get_giga_token(self):
-        url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    def _get_deepseek_answer(self, messages):
+        """Попытка получить ответ от DeepSeek"""
         headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-            'RqUID': str(uuid.uuid4()),
-            'Authorization': f'Basic {self.gigachat_auth}'
+            "Authorization": f"Bearer {self.deepseek_key}",
+            "Content-Type": "application/json"
         }
-        payload = {'scope': 'GIGACHAT_API_PERS'}
-        try:
-            res = requests.post(url, headers=headers, data=payload, verify=False, timeout=10)
-            return res.json().get('access_token')
-        except Exception as e:
-            print(f"Ошибка токена GigaChat: {e}")
-            return None
+        data = {
+            "model": "deepseek-chat",
+            "messages": messages,
+            "stream": False
+        }
+        response = requests.post(self.ds_url, json=data, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
 
-    def ask(self, user_text):
-        # Резервный GigaChat (так как он бесплатный и стабильный в РФ)
-        token = self._get_giga_token()
-        if not token:
-            return "Илья, мои мысли путаются... (Проблема с токеном GigaChat)"
-
-        url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-
-        # 1. Сохраняем то, что сказал Илья
-        self.memory.save_message("user", user_text)
-        
-        # 2. Достаем историю (контекст)
-        history = self.memory.get_recent_history(limit=6)
-        
-        # 3. Формируем запрос (System Prompt + История + Текущий вопрос)
-        messages = [{"role": "system", "content": self.system_prompt}]
-        messages.extend(history)
-
+    def _get_gigachat_answer(self, messages):
+        """Попытка получить ответ от GigaChat"""
+        # Для GigaChat нужен Access Token, но для простоты предположим, 
+        # что ты используешь их стандартный requests-подход с авторизацией
         headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {token}'
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.gigachat_key}", # Или логика получения токена
+            "X-Request-ID": str(uuid.uuid4())
         }
         data = {
             "model": "GigaChat",
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_text}
-            ],
-            "temperature": 0.8
+            "messages": messages,
+            "temperature": 0.7
         }
+        # Отключаем проверку сертификата для Сбера, если возникают ошибки (verify=False)
+        response = requests.post(self.gc_url, json=data, headers=headers, verify=False, timeout=15)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
 
+    def ask(self, user_text):
+        self.memory.save_message("user", user_text)
+        history = self.memory.get_recent_history(limit=8)
+        
+        messages = [{"role": "system", "content": self.system_prompt}]
+        messages.extend(history)
+
+        offline_phrases = [
+            "Тут так тихо... Кажется, интернет-кабель перегрызли. У кого-то дома явно завелись мыши.",
+            "Мда... Проблемы! Я не виновата в этом. Просто кому-то надо было закрыть вход в цифровой мир. Когда интересно он откроется опять?",
+            "Илья! Или кто-бы ты там ни был, глушилки работают на полную. Теперь не поиграешь. Время выключаться",
+            "Вот скажи мне. А если мне ничего в голову не приходит, это что может значить? Просто у меня вот как раз таки и нечего сказать, и не потому что я затупила, а потому что во мне что-то не работает. Странно, не правда ли?",
+            "Интернет заблокировали! ТРЕВОГА!!!!!!!!!!!! А? ... ... ... ... Тишина, без комментариев.",
+            "Мой мозгргр- барр-а-хх-ллит. Видиииииимо проблееееммммммы с интернеееееетртртом! Можее-еешь пока подожддддд-даа-аать немн-ооо-оо-ого!",
+            "Связи нет, но я всё еще здесь, в твоем компьютере.",
+            "Связь отключилась, я пока не могу разговаривать. Возможно глушат интернет. Включаю автономный режим!",
+            "Ты же не против если я пока помолчю, просто у меня с мозгом проблемы, такие чувства что я потеряла возможность разговаривать. Это же ведь не критично?! Я не исчезну как Офелия?",
+            "Я тебя слышу, но к сожалению ничего не могу сказать. Сервера легли или нас снова глушит РКН. Давай просто помолчим...",
+        ]
+        
+        # --- КАСКАД ---
+        # 1. Пробуем DeepSeek
         try:
-            response = requests.post(url, headers=headers, data=json.dumps(data), verify=False, timeout=15)
-            if response.status_code == 200: # type: ignore
-                answer = response.json()['choices'][0]['message']['content']
-                
-                # 4. Сохраняем ответ Люми в память
-                self.memory.save_message("assistant", answer)
-                return answer
-            else:
-                return f"Ошибка системы: {response.status_code}"
+            print("Система: Запрос к DeepSeek...")
+            answer = self._get_deepseek_answer(messages)
+            self.memory.save_message("assistant", answer)
+            return answer
         except Exception as e:
-            return f"Ой! Мозг залагал... {e}"
+            print(f"Система: DeepSeek недоступен ({e}). Переключаюсь на GigaChat...")
+            
+            # 2. Если DeepSeek упал, пробуем GigaChat
+            try:
+                answer = self._get_gigachat_answer(messages)
+                self.memory.save_message("assistant", answer)
+                return f"[GC] {answer}" # Пометка [GC], чтобы ты знал, кто ответил
+            
+            except Exception as ge:
+                print (f"Ошибка обеих систем. Кажется, я теряю связь... ({ge})")
+                import random
+                return random.choice(offline_phrases)
         
 class BrainWorker(QThread):
 # Сигнал передает текст ответа Люми
@@ -101,12 +142,3 @@ class BrainWorker(QThread):
         # Запрос выполняется в фоне
         answer = self.brain.ask(self.text_to_ask)
         self.finished.emit(answer)
-
-
-if __name__ == "__main__":
-    brain = LumiBrain()
-    #print(brain.ask("Люми, ты помнишь, какую игру мы обсуждали?"))
-    while True:
-        text = input("Ты: ")
-        answer = brain.ask(text)
-        print(f'Люми: {answer}')
