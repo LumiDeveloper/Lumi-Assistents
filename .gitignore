@@ -208,3 +208,7 @@ __marimo__/
 
 # Requeirement
 requeirements.txt
+
+# AI
+ai/
+model_pro/

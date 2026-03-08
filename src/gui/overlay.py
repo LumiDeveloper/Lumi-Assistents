@@ -11,6 +11,10 @@ from core.listener import SpeechWorker
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QFrame, QVBoxLayout
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QThread, pyqtSignal
+from core.brain import LumiBrain
+from core.workers import BrainWorker # type: ignore # или опиши класс прямо в этом файле
+
 
 # Настройка завершения скрипта по Ctrl+C
 signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -23,14 +27,17 @@ class LumiOverlay(QWidget):
         super().__init__()
         self.init_ui()
         
-        # Создаем объект-слушатель. 
-        # device_id — это тот ID от AudioRelay, который ты нашел.
+        # Создаем объект-слушатель. # device_id — это тот ID от AudioRelay, который ты нашел.
         self.worker = SpeechWorker(device_id=1) 
 
         # CONNECT: Связываем сигнал из потока с методом в этом классе.
-        # Это магия Qt: когда Vosk найдет текст, он "выстрелит" сигналом,
-        # и выполнится метод on_speech, получив этот текст.
         self.worker.text_recognized.connect(self.on_speech)
+
+        self.brain = LumiBrain()
+        self.brain_worker = BrainWorker(self.brain)
+
+        # Когда поток закончит запрос к API, он вызовет метод self.show_lumi_answer
+        self.brain_worker.finished.connect(self.show_lumi_answer)
 
         # START: Запускаем поток. Теперь он живет своей жизнью и не мешает окну.
         self.worker.start()
@@ -96,6 +103,29 @@ class LumiOverlay(QWidget):
     def mouseReleaseEvent(self, event):
         self.old_pos = None
 
+# ---------------------------------------------- Создаем мозг для нашей Люми ------------------------------------------------------- #
+
+    def handle_user_speech(self, text):
+        if not text.strip():
+            return
+            
+        print(f"Илья сказал: {text}")
+        
+        # Меняем текст в облачке на "..." чтобы было видно, что Люми думает
+        self.label_text.setText("...") 
+        
+        # Запускаем фоновый запрос к GigaChat
+        self.brain_worker.prepare(text)
+        self.brain_worker.start()
+
+    def show_lumi_answer(self, answer):
+        print(f"Люми ответила: {answer}")
+        self.label_text.setText(answer)
+        # Здесь в будущем мы будем менять спрайт Люми на радостный/грустный
+
+
+# ---------------------------------------------- Разговор для нашей Люми ------------------------------------------------------- #
+
     def on_speech(self, text):
         # Этот метод сработает автоматически, как только ты что-то скажешь
         print(f"Люми услышала: {text}")
@@ -109,11 +139,18 @@ class LumiOverlay(QWidget):
         QTimer.singleShot(5000, self.bubble.hide)
 
 
+# ----------------------------------------- Анимации и движения для нашей Люми ------------------------------------------------------- #
+
+
         # Маленький интерактив: если скажешь "замри", 
         # мы можем, например, поменять картинку
         if "привет" in text.lower():
             print("Люми радуется!")
             self.update_sprite("assets/lumi_happy.png")
+
+
+
+# ------------------------------------------- Включение/выключение нашей Люми ------------------------------------------------------- #
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
