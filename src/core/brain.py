@@ -13,12 +13,13 @@ def load_manual_env(file_path=".env"):
         with open(file_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
+                line = line.replace('\r', '').replace('\n', '')
                 if not line or line.startswith("#"):
                     continue
 
                 if "=" in line:
                     key, value = line.split("=", 1)
-                    os.environ[key.strip()] = value.strip()
+                    os.environ[key.strip()] = value.strip().replace('"', '').replace("'", "")
         print("Система: .env загружены")
     else:
         print("Система: .ENV НЕ НАЙДЕНЫ! РАБОТАЕМ БЕЗ НЕЙРОСЕТЕЙ!")
@@ -37,8 +38,10 @@ class LumiBrain:
 
         # Данные GigaChat
         self.gigachat_key = os.getenv("GIGACHAT_API_KEY")
-        self.gc_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+        self.gc_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 
+
+        # Метаданные Люми
         self.memory = LumiMemory()
         
         self.system_prompt = (
@@ -62,26 +65,40 @@ class LumiBrain:
             "messages": messages,
             "stream": False
         }
-        response = requests.post(self.ds_url, json=data, headers=headers, timeout=10)
+        response = requests.post(self.ds_url, json=data, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
+    
+    def get_token_gc(self):
+        url = self.gc_url
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "RqUID": str(uuid.uuid4()),
+            "Authorization": f"Bearer {self.gigachat_key}", # Или логика получения токена
+        }
+        payload = {
+            'scope': 'GIGACHAT_API_PERS'
+        }
+        res = requests.post(url, headers=headers, data=payload, verify=False)
+        return res.json()['access_token']
 
     def _get_gigachat_answer(self, messages):
-        """Попытка получить ответ от GigaChat"""
-        # Для GigaChat нужен Access Token, но для простоты предположим, 
-        # что ты используешь их стандартный requests-подход с авторизацией
+        token = self.get_token_gc()
+        url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.gigachat_key}", # Или логика получения токена
-            "X-Request-ID": str(uuid.uuid4())
+            "Authorization": f"Bearer {token}", # Или логика получения токена
         }
+
         data = {
             "model": "GigaChat",
             "messages": messages,
             "temperature": 0.7
         }
         # Отключаем проверку сертификата для Сбера, если возникают ошибки (verify=False)
-        response = requests.post(self.gc_url, json=data, headers=headers, verify=False, timeout=15)
+        response = requests.post(url, headers=headers, json=data, verify=False, timeout=60)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
 
