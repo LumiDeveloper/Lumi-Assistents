@@ -1,5 +1,6 @@
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QGuiApplication
+import pywinctl as pwc
 
 class LumiPhysics:
     def __init__(self, window):
@@ -21,8 +22,36 @@ class LumiPhysics:
     def get_floor_y(self):
         # Получаем границы всего экрана
         screen_rest = QGuiApplication.primaryScreen().availableGeometry()
-        return screen_rest.bottom() + 2
+        default_floor = screen_rest.bottom() + 2
+
+        char_x_center = self.window.x() + self.window.width() // 2
+        char_feet_y = self.window.y() + self.window.height()
+
+        try:
+            all_windows = pwc.getAllWindows()
+            potential_floors = [default_floor]
+
+            for win in all_windows:
+                if not win.title or "Lumi" in win.title or not win.isVisible or win.isMinimized:
+                    continue
+                if win.left - 20 <= char_x_center <= win.right + 20:
+                    if win.top >= char_feet_y - 10:
+                        potential_floors.append(win.top)
+            return min(potential_floors)
+        except Exception:
+            return default_floor
+        
     
+    def smooth_velocity(self):
+        if not self.is_falling:
+            return 0
+        
+        self.velocity_y += self.gravity * 0.4
+
+        if self.velocity_y > 40:
+            self.velocity_y = 40
+
+        return self.velocity_y
     
     def update_physics(self):
         if getattr(self.window, 'is_dragging', False):
@@ -31,12 +60,14 @@ class LumiPhysics:
         floor_y = self.get_floor_y()
         curr_pos = self.window.pos()
         window_h = self.window.height()
-
         target_y = floor_y - window_h
 
+        diff_y = curr_pos.y() - target_y
+
         if self.is_falling:
-            self.velocity_y += self.gravity
-            new_y = int(curr_pos.y() + self.velocity_y)
+            vel = self.smooth_velocity()
+            new_y =int(curr_pos.y() + vel)
+
             # Проверка на столкновение с панелью задач
             if new_y + window_h >= floor_y:
                 new_y = floor_y - window_h
@@ -45,8 +76,10 @@ class LumiPhysics:
                 # Двигаем окно
             self.window.move(curr_pos.x(), new_y)
         else:
-            if abs(curr_pos.y() - target_y) > 1:
+            if 0 < abs(diff_y) <= 15:
                 self.window.move(curr_pos.x(), target_y)
+            elif diff_y < -15:
+                self.is_falling = True
 
     def keep_on_ground(self, floor_y):
         curr_geo = self.window.geometry()

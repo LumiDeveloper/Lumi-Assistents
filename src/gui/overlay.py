@@ -159,8 +159,7 @@ class LumiOverlay(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_dragging = False
-            if hasattr(self, 'physics'):
-                self.physics.is_falling = True
+            self.physics.is_falling = True
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
