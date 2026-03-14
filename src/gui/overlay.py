@@ -1,5 +1,5 @@
 # --------------------------------- Добавляем конфигурацию для python src/gui/overlay.py ------------------------------------------ #
-
+import re
 import sys
 import os
 
@@ -14,6 +14,8 @@ from PyQt6.QtGui import QPixmap
 
 from core.brain import BrainWorker, LumiBrain
 from core.physics import LumiPhysics
+from skills.actions import LumiActions
+
 
 
 # Настройка завершения скрипта по Ctrl+C
@@ -36,8 +38,13 @@ class LumiWorker(QThread):
 
 
 class LumiOverlay(QWidget):
-    def __init__(self, brain=None):
+    def __init__(self, brain, books):
         super().__init__()
+        self.brain = brain
+        self.books = books
+
+        from skills.actions import LumiActions
+        self.actions = LumiActions() 
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | 
@@ -122,6 +129,69 @@ class LumiOverlay(QWidget):
             self.sprite_label.setText(f"Ошибка: Люми... А именно {path} не найдена! Поищите в другом месте.")
             self.sprite_label.setStyleSheet("background: red; color: white;")
 
+ # ---------------------------------------------- Создаем мозг и память для нашей Люми ------------------------------------------------------- #
+
+    def process_memory_tags(self, text):
+        """Метод обработки памяти"""
+        import re
+        # Регулярка для поиска тегов [SAVE_...]
+        pattern = r"\[SAVE_(\w+)\s*:\s*(.*?)\]"
+        tags = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+        
+        book_map = {
+            "USER": "user",
+            "RESEARCH": "research",
+            "SECRET": "secret"
+        }
+        
+        for b_type_raw, content in tags:
+            b_type = b_type_raw.strip().upper()
+            target_book = book_map.get(b_type)
+            
+            if target_book:
+                clean_content = content.replace('\n', ' ').strip()
+                pairs = clean_content.split(';')
+                for pair in pairs:
+                    if '=' in pair:
+                        k, v = pair.split('=', 1)
+                        self.books.save_fact(target_book, k.strip(), v.strip())
+                        print(f"✅ Система: {target_book} -> {k.strip()} сохранено!")
+                    elif '-' in pair: # На случай если Люми поставит тире
+                        k, v = pair.split('-', 1)
+                        self.books.save_fact(target_book, k.strip(), v.strip())
+
+        # Удаляем все теги из текста для вывода на экран
+        clean_text = re.sub(r"\[SAVE_.*?\]", "", text, flags=re.DOTALL).strip()
+        return clean_text if clean_text else "..."
+    
+
+    def handle_user_speech(self, text):
+        if not text.strip():
+            return
+            
+        print(f"Илья сказал: {text}")
+        
+        # Меняем текст в облачке на "..." чтобы было видно, что Люми думает
+        self.bubble_label.show()
+        self.bubble_label.setText("<i>Думаю...</i>")
+        
+        # Запускаем фоновый запрос к GigaChat
+        self.brain_worker.prepare(text)
+        self.brain_worker.start()
+
+    def show_lumi_answer(self, answer):
+        # Сначала магия сохранения и очистки
+        clean_text = self.process_memory_tags(answer)
+
+        # Теперь выводим ТОЛЬКО чистый текст
+        self.bubble_label.setText(clean_text)
+
+        self.bubble_label.show()
+        self.adjustSize()
+        self.is_thinking = False
+
+
+
 
 
     def send_message(self):
@@ -139,10 +209,40 @@ class LumiOverlay(QWidget):
             self.worker.start()
     
     def display_answer(self, answer):
-        self.bubble_label.setText(f"Люми: {answer}")
-        self.adjustSize()
+        """Этот метод вызывается сигналом от LumiWorker (строка ~128)"""
+        
+        # 1. Сначала чистим текст и сохраняем факты в JSON (v0.4)
+        # Этот метод у тебя уже должен быть прописан выше
+        text_after_memory = self.process_memory_tags(answer)
+        
+        # 2. Теперь ищем и выполняем системные команды (v0.5)
+        import re
+        action_pattern = r"\[EXEC:\s*(.*?)\]"
+        
+        # Находим список всех программ для запуска
+        apps_to_run = re.findall(action_pattern, text_after_memory)
+        
+        for app in apps_to_run:
+            print(f"⚙️ Система: Попытка запуска '{app}'...")
+            # Вызываем метод из твоего нового файла в skills
+            self.actions.run_app(app) 
+            
+        # 3. Убираем теги EXEC из финального текста для пользователя
+        clean_text = re.sub(action_pattern, "", text_after_memory).strip()
 
+        # 4. Выводим ТОЛЬКО чистый текст в облачко
+        self.bubble_label.setText(clean_text)
+        self.bubble_label.show()
+
+        # 5. Логи и состояние
+        print(f"--- [DEBUG v0.5] ---")
+        print(f"Оригинал: {answer}")
+        print(f"Итог: {clean_text}")
+
+        self.adjustSize()
         self.is_thinking = False
+
+# ---------------------------------------------- Создаем физику для нашей Люми ------------------------------------------------------- #
 
     # Логика перетаскивания окна по экрану
     def mousePressEvent(self, event):
@@ -166,29 +266,9 @@ class LumiOverlay(QWidget):
         if hasattr(self, 'physics') and not self.physics.is_falling:
             self.physics.force_anchor()
 
-# ---------------------------------------------- Создаем мозг для нашей Люми ------------------------------------------------------- #
+# ---------------------------------------------- Создаем руки для нашей Люми ------------------------------------------------------- #
 
-    def handle_user_speech(self, text):
-        if not text.strip():
-            return
-            
-        print(f"Илья сказал: {text}")
-        
-        # Меняем текст в облачке на "..." чтобы было видно, что Люми думает
-        self.bubble_label.show()
-        self.bubble_label.setText("<i>Думаю...</i>")
-        
-        # Запускаем фоновый запрос к GigaChat
-        self.brain_worker.prepare(text)
-        self.brain_worker.start()
 
-    def show_lumi_answer(self, answer):
-        print(f"Люми ответила: {answer}")
-        self.bubble_label.setText(answer)
-        self.bubble_label.show()
-        self.adjustSize()
-        self.is_thinking = False
-        # Здесь в будущем мы будем менять спрайт Люми на радостный/грустный
 
 
 # ---------------------------------------------- Разговор для нашей Люми ------------------------------------------------------- #

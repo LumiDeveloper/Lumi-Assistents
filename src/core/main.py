@@ -11,9 +11,11 @@ from src.gui.overlay import LumiOverlay
 def main():
     app = QApplication(sys.argv)
     
-    # Создаем мозг
+    # Создаем мозг и базу с блокнотами (память)
     brain = LumiBrain()
     lumi_books = LumiBooks()
+    lumi_books.maintenance()
+
     
     # Создаем оверлей и передаем ему мозг
     window = LumiOverlay(brain, lumi_books)
