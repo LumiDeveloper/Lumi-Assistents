@@ -7,8 +7,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import signal
+import pyperclip
 from core.listener import SpeechWorker
-from PyQt6.QtWidgets import QApplication, QLayout, QWidget, QVBoxLayout, QLabel, QLineEdit
+from PyQt6.QtWidgets import QApplication, QLayout, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
@@ -105,6 +106,24 @@ class LumiOverlay(QWidget):
         self.input_field.setFixedWidth(300)
         self.input_field.returnPressed.connect(self.send_message)
 
+        # --- ДОБАВЛЯЕМ КНОПКУ КОПИРОВАНИЯ ---
+        self.copy_btn = QPushButton("📋 Копировать ответ")
+        self.copy_btn.setFixedWidth(300)
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(50, 50, 50, 200);
+                color: #00FF00;
+                border: 1px solid #00FF00;
+                border-radius: 5px;
+                padding: 5px;
+                font-family: 'Courier New';
+            }
+            QPushButton:hover {
+                background: rgba(70, 70, 70, 255);
+            }
+        """)
+        self.copy_btn.clicked.connect(self.copy_answer)
+
 
         # 3. ЛЮМИ
         self.sprite_label = QLabel()
@@ -112,10 +131,23 @@ class LumiOverlay(QWidget):
 
         self.main_layout.addWidget(self.bubble_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addWidget(self.input_field, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.main_layout.addWidget(self.copy_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addWidget(self.sprite_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         
 
         self.show()
+    
+    def copy_answer(self):
+        # Берем текст из облачка
+        text = self.bubble_label.text()
+        # Убираем HTML-теги (типа <i>), если они там есть
+        clean_text = re.sub(r'<.*?>', '', text)
+        
+        if clean_text and clean_text != "..." and "Думаю" not in clean_text:
+            pyperclip.copy(clean_text)
+            self.copy_btn.setText("✅ Скопировано!")
+            # Возвращаем текст кнопки через 2 секунды
+            QTimer.singleShot(2000, lambda: self.copy_btn.setText("📋 Копировать ответ"))
 
     def update_sprite(self, path):
         base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -128,6 +160,7 @@ class LumiOverlay(QWidget):
         else:
             self.sprite_label.setText(f"Ошибка: Люми... А именно {path} не найдена! Поищите в другом месте.")
             self.sprite_label.setStyleSheet("background: red; color: white;")
+
 
  # ---------------------------------------------- Создаем мозг и память для нашей Люми ------------------------------------------------------- #
 
@@ -189,8 +222,6 @@ class LumiOverlay(QWidget):
         self.bubble_label.show()
         self.adjustSize()
         self.is_thinking = False
-
-
 
 
 
