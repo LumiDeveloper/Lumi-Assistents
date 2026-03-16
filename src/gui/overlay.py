@@ -25,19 +25,6 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 # ---------------------------------------------- Создаем кожу для нашей Люми ------------------------------------------------------- #
 
-class LumiWorker(QThread):
-    result_received = pyqtSignal(str)
-
-    def __init__(self, brain, text):
-        super().__init__()
-        self.brain = brain
-        self.text = text
-
-    def run(self):
-        answer = self.brain.ask(self.text)
-        self.result_received.emit(answer)
-
-
 class LumiOverlay(QWidget):
     def __init__(self, brain, books):
         super().__init__()
@@ -125,6 +112,26 @@ class LumiOverlay(QWidget):
         self.copy_btn.clicked.connect(self.copy_answer)
 
 
+        # Кнопка сканирования экрана
+        self.btn_scan = QPushButton("👁️", self)
+        self.btn_scan.setFixedSize(35, 35)
+        self.btn_scan.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(60, 60, 70, 200);
+                color: #00ffcc;
+                border: 1px solid #00ffcc;
+                border-radius: 17px;
+                font-size: 18px;
+            }
+            QPushButton:hover {
+                background-color: rgba(0, 255, 204, 50);
+                border: 2px solid #00ffcc;
+            }
+        """)
+        self.btn_scan.setToolTip("Люми посмотрит на твой экран")
+        self.btn_scan.clicked.connect(self.manual_look)
+
+
         # 3. ЛЮМИ
         self.sprite_label = QLabel()
         self.update_sprite("assets/lumi_idle.png")
@@ -132,6 +139,7 @@ class LumiOverlay(QWidget):
         self.main_layout.addWidget(self.bubble_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addWidget(self.input_field, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addWidget(self.copy_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.main_layout.addWidget(self.btn_scan, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.main_layout.addWidget(self.sprite_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         
 
@@ -228,16 +236,12 @@ class LumiOverlay(QWidget):
     def send_message(self):
         text = self.input_field.text()
         if text:
-            # old_bottom = self.geometry().bottom()
-            # self.move(self.x(), self.y() - 500)
-
             self.input_field.clear()
             self.bubble_label.setText("<i>Люми думает...</i>")
             self.bubble_label.show()
-
-            self.worker = LumiWorker(self.brain, text)
-            self.worker.result_received.connect(self.display_answer)
-            self.worker.start()
+            # Используем brain_worker вместо LumiWorker, чтобы не убить микрофон
+            self.brain_worker.prepare(text)
+            self.brain_worker.start()
     
     def display_answer(self, answer):
         """Этот метод вызывается сигналом от LumiWorker (строка ~128)"""
@@ -299,7 +303,32 @@ class LumiOverlay(QWidget):
 
 # ---------------------------------------------- Создаем руки для нашей Люми ------------------------------------------------------- #
 
+    def manual_look(self):
+        import pyautogui
+        import os
+        
+        path = "lumi_scan.jpg"
+        screenshot = pyautogui.screenshot()
+        screenshot = screenshot.resize((1024, 576))
+        screenshot.convert("RGB").save(path, "JPEG", quality=50)
+        
+        description = self.brain.get_vision_description(path)
+        
+        if not description or "Ошибка" in description:
+            self.show_lumi_answer("Илья, я пытаюсь открыть глаза, но вокруг всё застлано цифровым туманом...")
+            return
 
+        # Модифицированный промпт с инструкцией по сохранению
+        surprise_prompt = (
+            f"Ты только что открыла глаза и увидела на экране Ильи: {description}. "
+            "Это твой новый визуальный опыт. Твоя живая реакция? "
+            "\n\nВажно: Обязательно сохрани описание увиденного в свой блокнот, используя формат: "
+            "[SAVE_RESEARCH: зрение=активировано; объект_на_экране=краткое описание]"
+        )
+        
+        # Запускаем через brain_worker, который умеет вызывать display_answer
+        self.brain_worker.prepare(surprise_prompt)
+        self.brain_worker.start()
 
 
 # ---------------------------------------------- Разговор для нашей Люми ------------------------------------------------------- #
@@ -334,9 +363,15 @@ class LumiOverlay(QWidget):
         if hasattr(self, 'physics'):
             QTimer.singleShot(20, self.physics.force_anchor)
 
-        self.worker = LumiWorker(self.brain, text)
-        self.worker.result_received.connect(self.display_answer)
+        # 1. Создаем воркер (передаем только мозг)
+        self.worker = BrainWorker(self.brain) 
+        
+        # 2. Подключаем сигнал (у BrainWorker это 'finished', а не 'result_received')
+        self.worker.finished.connect(self.display_answer)
         self.worker.finished.connect(self.reset_thinking_state)
+        
+        # 3. Подготавливаем текст и запускаем
+        self.worker.prepare(text)
         self.worker.start()
         
     
@@ -352,5 +387,10 @@ class LumiOverlay(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    lumi = LumiOverlay()
+    brain = LumiBrain()
+    # Предположим, у тебя есть объект памяти (books/memory)
+    # Если нет отдельного объекта, передай None или создай его
+    from memory import LumiMemory 
+    memory = LumiMemory()
+    lumi = LumiOverlay(brain, memory)
     sys.exit(app.exec())

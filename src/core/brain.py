@@ -124,6 +124,87 @@ class LumiBrain:
         response = requests.post(url, headers=headers, json=data, verify=False, timeout=60)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
+    
+
+
+    
+    # Добавь это в класс LumiBrain в brain.py
+
+    def get_vision_description(self, image_path):
+        import uuid
+        try:
+            auth_key = os.getenv("GIGACHAT_API_KEY")
+            rq_id = str(uuid.uuid4()) # Сберу критически важен уникальный ID запроса
+
+            # 1. Авторизация
+            url_auth = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+            headers_auth = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+                'Authorization': f'Basic {auth_key}',
+                'RqUID': rq_id # Добавляем сюда
+            }
+            
+            res_auth = requests.post(url_auth, headers=headers_auth, data={'scope': 'GIGACHAT_API_PERS'}, verify=False, timeout=10)
+            token = res_auth.json().get('access_token')
+
+            # 2. Загрузка файла (Добавляем параметр purpose)
+            url_upload = "https://gigachat.devices.sberbank.ru/api/v1/files"
+            with open(image_path, "rb") as f:
+                # ВАЖНО: Добавляем 'purpose': 'general' в данные запроса
+                # Это говорит серверу, что файл можно использовать в чате
+                res_upload = requests.post(
+                    url_upload, 
+                    headers={'Authorization': f'Bearer {token}'},
+                    files={'file': (image_path, f, 'image/jpeg')},
+                    data={'purpose': 'general'}, # ВОТ ЭТА СТРОЧКА СПАСЕТ СЮРПРИЗ
+                    verify=False,
+                    timeout=15
+                )
+            
+            upload_data = res_upload.json()
+            file_id = upload_data.get('id')
+            
+            if not file_id:
+                print(f"СИСТЕМА: Файл не загрузился. Ответ Сбера: {upload_data}")
+                return "Ошибка: Не удалось получить ID файла."
+
+            # 3. Запрос зрения (Переключаемся на модель с поддержкой Vision)
+            url_chat = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+            payload = {
+                "model": "GigaChat-Max", # ОБЯЗАТЕЛЬНО Max или Pro для работы с фото
+                "messages": [{
+                    "role": "user",
+                    "content": "Что на этом фото? Опиши очень кратко.",
+                    "attachments": [file_id]
+                }]
+            }
+            res_chat = requests.post(url_chat, headers={'Authorization': f'Bearer {token}'}, json=payload, verify=False, timeout=20)
+            
+            # ДЕБАГ: Печатаем ответ, чтобы видеть причину ошибки 'choices'
+            json_response = res_chat.json()
+            if 'choices' not in json_response:
+                print(f"СИСТЕМА: Сбер ответил без 'choices'. Ответ сервера: {json_response}")
+                return f"Ошибка модели: {json_response.get('message', 'Неизвестная ошибка')}"
+                
+            return json_response['choices'][0]['message']['content']
+
+        except Exception as e:
+            print(f"Критическая ошибка GigaVision: {e}")
+            return f"Ошибка зрения: {str(e)}"
+
+    def process_vision_event(self, image_path):
+        # 1. Получаем описание от GigaChat Vision
+        description = self.get_vision_description(image_path)
+        
+        # 2. Формируем характерный ответ
+        prompt = f"Ты увидела на экране следующее: {description}. Прокомментируй это кратко и в своем стиле (ты - цифровая девушка Люми)."
+        
+        # 3. Отправляем это в обычный цикл общения
+        return self.ask(prompt)
+        
+
+
 
     def ask(self, user_text):
         user_name = "Илья"
