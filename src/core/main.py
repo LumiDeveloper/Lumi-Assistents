@@ -2,6 +2,7 @@ import sys
 import os
 from PyQt6.QtWidgets import QApplication
 from brain import LumiBrain
+from lumi_books import LumiBooks
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -10,11 +11,14 @@ from src.gui.overlay import LumiOverlay
 def main():
     app = QApplication(sys.argv)
     
-    # Создаем мозг
+    # Создаем мозг и базу с блокнотами (память)
     brain = LumiBrain()
+    lumi_books = LumiBooks()
+    lumi_books.maintenance()
+
     
     # Создаем оверлей и передаем ему мозг
-    window = LumiOverlay(brain)
+    window = LumiOverlay(brain, lumi_books)
     window.show()
     
     sys.exit(app.exec())
