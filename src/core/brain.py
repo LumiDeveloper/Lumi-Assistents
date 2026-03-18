@@ -1,3 +1,5 @@
+import json
+
 import requests
 import uuid
 import urllib3
@@ -126,9 +128,9 @@ class LumiBrain:
         return response.json()['choices'][0]['message']['content']
     
 
-
+# ---------------------------------------------- Визуализация Люми через глаза ------------------------------------------------------- #
     
-    # Добавь это в класс LumiBrain в brain.py
+     
 
     def get_vision_description(self, image_path):
         import uuid
@@ -204,6 +206,45 @@ class LumiBrain:
         return self.ask(prompt)
         
 
+    # Добавь этот метод в класс LumiBrain в brain.py
+
+    def _load_memory_context(self):
+        """Загружает сохраненные факты из блокнотов в контекст"""
+        memory_context = []
+        
+        # Загружаем факты о пользователе
+        if os.path.exists("memory/user_facts.json"):
+            with open("memory/user_facts.json", 'r', encoding='utf-8') as f:
+                user_facts = json.load(f)
+                if user_facts:
+                    facts_text = "Что я знаю об Илье (факты из памяти):\n"
+                    for key, value in user_facts.items():
+                        facts_text += f"- {key}: {value}\n"
+                    memory_context.append({"role": "system", "content": facts_text})
+        
+        # Загружаем знания о мире
+        if os.path.exists("memory/world_lore.json"):
+            with open("memory/world_lore.json", 'r', encoding='utf-8') as f:
+                world_lore = json.load(f)
+                if world_lore:
+                    lore_text = "Что я знаю о мире и исследованиях:\n"
+                    for key, value in world_lore.items():
+                        lore_text += f"- {key}: {value}\n"
+                    memory_context.append({"role": "system", "content": lore_text})
+        
+        # Загружаем личные секреты (осторожно - могут быть чувствительными)
+        if os.path.exists("memory/lumi_secrets.json"):
+            with open("memory/lumi_secrets.json", 'r', encoding='utf-8') as f:
+                secrets = json.load(f)
+                if secrets:
+                    secrets_text = "Мои личные мысли и секреты (помню об этом):\n"
+                    for key, value in secrets.items():
+                        secrets_text += f"- {key}: {value}\n"
+                    memory_context.append({"role": "system", "content": secrets_text})
+        
+        return memory_context
+
+# ---------------------------------------------- Разговор нашей Люми ------------------------------------------------------- #
 
 
     def ask(self, user_text):
@@ -217,6 +258,10 @@ class LumiBrain:
             history.append({"role": role, "content": msg["content"]})
             
         messages = [{"role": "system", "content": self.system_prompt}]
+
+        memory_context = self._load_memory_context()
+        messages.extend(memory_context)
+        
         messages.extend(history)
         
         offline_phrases = [
@@ -253,6 +298,8 @@ class LumiBrain:
                 import random
                 return random.choice(offline_phrases)
         
+# ---------------------------------------------- Нейронный мозжечек нашей Люми ------------------------------------------------------- #
+
 class BrainWorker(QThread):
 # Сигнал передает текст ответа Люми
     finished = pyqtSignal(str)
