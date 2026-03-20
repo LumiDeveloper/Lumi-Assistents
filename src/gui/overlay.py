@@ -55,8 +55,11 @@ class LumiOverlay(QWidget):
         self.is_thinking = False
         self.is_dragging = False
 
+        # СОЗДАЕМ ОДИН BrainWorker на всё время жизни программы
         self.brain_worker = BrainWorker(self.brain)
-        self.brain_worker.finished.connect(self.show_lumi_answer)
+        # Подключаем к методу, который обрабатывает ВСЁ (и память, и EXEC)
+        self.brain_worker.finished.connect(self.display_answer)
+        self.brain_worker.finished.connect(self.reset_thinking_state)
 
         self.physics = LumiPhysics(self)
         self.physics.start()
@@ -216,7 +219,7 @@ class LumiOverlay(QWidget):
         self.bubble_label.show()
         self.bubble_label.setText("<i>Думаю...</i>")
         
-        # Запускаем фоновый запрос к GigaChat
+        # Запускаем фоновый запрос
         self.brain_worker.prepare(text)
         self.brain_worker.start()
 
@@ -239,37 +242,37 @@ class LumiOverlay(QWidget):
             self.input_field.clear()
             self.bubble_label.setText("<i>Люми думает...</i>")
             self.bubble_label.show()
-            # Используем brain_worker вместо LumiWorker, чтобы не убить микрофон
+            # Используем brain_worker
             self.brain_worker.prepare(text)
             self.brain_worker.start()
     
     def display_answer(self, answer):
-        """Этот метод вызывается сигналом от LumiWorker (строка ~128)"""
+        """ЕДИНСТВЕННЫЙ метод обработки ответов"""
         
-        # 1. Сначала чистим текст и сохраняем факты в JSON (v0.4)
-        # Этот метод у тебя уже должен быть прописан выше
+        # 1. Сначала чистим текст и сохраняем факты в JSON
         text_after_memory = self.process_memory_tags(answer)
         
-        # 2. Теперь ищем и выполняем системные команды (v0.5)
+        # 2. Теперь ищем и выполняем системные команды
         import re
-        action_pattern = r"\[EXEC:\s*(.*?)\]"
+        
+        # Ищем теги в разных форматах: [EXEC: ...], [exec: ...], [Exec: ...]
+        action_pattern = r"\[(?:EXEC|exec|Exec):\s*(.*?)\]"
         
         # Находим список всех программ для запуска
         apps_to_run = re.findall(action_pattern, text_after_memory)
         
         for app in apps_to_run:
             print(f"⚙️ Система: Попытка запуска '{app}'...")
-            # Вызываем метод из твоего нового файла в skills
-            self.actions.run_app(app) 
+            result = self.actions.run_app(app)
+            print(f"Результат запуска: {result}")
             
-        # 3. Убираем теги EXEC из финального текста для пользователя
-        clean_text = re.sub(action_pattern, "", text_after_memory).strip()
+        # 3. Убираем все варианты тегов EXEC из финального текста
+        clean_text = re.sub(r"\[(?:EXEC|exec|Exec):.*?\]", "", text_after_memory).strip()
 
-        # 4. Выводим ТОЛЬКО чистый текст в облачко
+        # 4. Выводим чистый текст
         self.bubble_label.setText(clean_text)
         self.bubble_label.show()
 
-        # 5. Логи и состояние
         print(f"--- [DEBUG v0.5] ---")
         print(f"Оригинал: {answer}")
         print(f"Итог: {clean_text}")
@@ -363,16 +366,9 @@ class LumiOverlay(QWidget):
         if hasattr(self, 'physics'):
             QTimer.singleShot(20, self.physics.force_anchor)
 
-        # 1. Создаем воркер (передаем только мозг)
-        self.worker = BrainWorker(self.brain) 
-        
-        # 2. Подключаем сигнал (у BrainWorker это 'finished', а не 'result_received')
-        self.worker.finished.connect(self.display_answer)
-        self.worker.finished.connect(self.reset_thinking_state)
-        
-        # 3. Подготавливаем текст и запускаем
-        self.worker.prepare(text)
-        self.worker.start()
+        # ИСПРАВЛЕНО: используем существующий brain_worker, а не создаем новый!
+        self.brain_worker.prepare(text)
+        self.brain_worker.start()
         
     
     def reset_thinking_state(self):
